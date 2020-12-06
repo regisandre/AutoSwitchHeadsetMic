@@ -19,14 +19,12 @@ RED='\033[1;31m'
 GREEN="\033[1;32m"
 NC='\033[0m' # No Color
 
-# Check if there is Internet connection
-if ping -q -c 1 -W 1 8.8.8.8 > /dev/null; then
-	echo -ne "\n${GREEN}Internet connection : OK${NC}\n\n"
-    
-    # Check if all the need packages and scripts are installed
+# Check if all the need packages and scripts are installed
+checkNecessaryPackagesInstalled() {
     # Packages needed : acpid, pulseaudio, coreutils, grep, zenity, zenity-common
     packagesNeeded=(acpid pulseaudio coreutils grep zenity zenity-common)
-    packagesThatMustBeInstalled=""
+    
+    # Checks one by one if the packages are installed and adds them to an installation list
     for pn in ${packagesNeeded[@]}; do
         if [[ $(dpkg -s $pn | grep Status) != *"installed"* ]]; then
             echo -e "${RED}$pn is not installed${NC}"
@@ -36,20 +34,75 @@ if ping -q -c 1 -W 1 8.8.8.8 > /dev/null; then
 
     # Automatically install required packages and scripts
     if [[ ! -z "$packagesThatMustBeInstalled" ]]; then
-        if zenity --question --title="Confirm automatic installation" --text="Are you sure you want to go ahead and install these programs: $packagesThatMustBeInstalled" --no-wrap 
-        then
-            sudo apt update && sudo apt install -y $packagesThatMustBeInstalled
+        # Multi-step question for packages installation with zenity (GUI) or simple questions in the terminal
+        if [[ $(dpkg -s zenity | grep Status) == *"installed"* ]]; then # Check if zenity is installed
+            if zenity --question --title="Confirm automatic installation" --text="Are you sure you want to go ahead and install these programs: $packagesThatMustBeInstalled?" --no-wrap 
+            then
+                sudo apt update && sudo apt install -y $packagesThatMustBeInstalled
+            else
+                if zenity --question --title="Packages needed" --text="These packages must be installed for the script to work.\n\nDo you want to retry installing the packages necessary for this script to run correctly?" --no-wrap
+                then
+                    checkNecessaryPackagesInstalled # Restart the required package checks
+                else
+                    if ! zenity --question --title="Continue without all packages installed?" --text="Do you want to continue without all the packages being installed? This could cause problems during script execution." --no-wrap
+                    then
+                        exit 1
+                    fi
+                fi
+            fi  
         else
-            zenity --error --title="Packages needed" --text="These packages must be installed for the script to work" --no-wrap
-            echo -ne "\n${RED}These packages must be installed for the script to work${NC}\n\n"
-            exit 1
+            echo -n "Are you sure you want to go ahead and install these programs: $packagesThatMustBeInstalled? (Y/n): "; read answer
+            if [ "$answer" != "${answer#[Yy]}" ]; then
+                sudo apt update && sudo apt install -y $packagesThatMustBeInstalled
+            else
+                echo -ne "\n${RED}These packages must be installed for the script to work${NC}\n\nDo you want to retry installing the packages necessary for this script to run correctly? (Y/n): "; read answer
+                if [ "$answer" != "${answer#[Yy]}" ]; then
+                    checkNecessaryPackagesInstalled # Restart the required package checks
+                else
+                    echo -n "Do you want to continue without all the packages being installed? This could cause problems during script execution (Y/n): "; read answer
+                    if [ "$answer" == "${answer#[Yy]}" ]; then
+                        exit 1
+                    fi
+                fi
+            fi
         fi
     fi
-else
-	echo -ne "${RED}First, connect the computer to the Internet${NC}\n\n"
-	zenity --error --title="Internet problem" --text="First, connect the computer to the Internet to install any missing packages" --no-wrap
-#	exit 1
-fi
+}
+
+# Check if there is Internet connection
+checkInternetConnection() {
+    if ping -q -c 1 -W 1 8.8.8.8 > /dev/null; then
+        echo -ne "\n${GREEN}Internet connection : OK${NC}\n\n"
+        checkNecessaryPackagesInstalled # Check if all the need packages and scripts are installed
+    else
+        # Multi-step question for the Internet connection with zenity (GUI) or simple questions in the terminal
+        if [[ $(dpkg -s zenity | grep Status) == *"installed"* ]]; then # Check if zenity is installed
+            if zenity --question --title="Internet problem" --text="First, connect the computer to the Internet to install any missing packages\n\nDo you want to try again after connecting to the Internet?" --no-wrap
+            then
+                checkInternetConnection # Restart the Internet connection test
+            else
+                if ! zenity --question --title="Continue without Internet?" --text="Do you want to continue without an Internet connection? This could cause problems during script execution." --no-wrap
+                then
+                    exit 1
+                fi
+            fi
+        else
+            echo -ne "${RED}First, connect the computer to the Internet${NC}\n\n"
+
+            echo -n "Do you want to try again after connecting to the Internet? (Y/n): "; read answer
+            if [ "$answer" != "${answer#[Yy]}" ]; then
+                checkInternetConnection # Restart the Internet connection test
+            else
+                echo -n "Do you want to continue without an Internet connection? This could cause problems during script execution (Y/n): "; read answer
+                if [ "$answer" == "${answer#[Yy]}" ]; then
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+}
+
+checkInternetConnection
 
 # Retrieve the index of the port used to connect the headset
 index=$(pacmd list-sources | egrep 'index|ports|analog-input-headset-mic' | egrep '\*\sindex:\s+[0-9]'  | cut -d':' -f2);
